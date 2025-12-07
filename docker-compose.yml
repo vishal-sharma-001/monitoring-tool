@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: monitoring-postgres
+    environment:
+      POSTGRES_DB: monitoring_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - monitoring-network
+
+  monitoring-tool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: monitoring-tool
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: monitoring_db
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configs:/root/configs:ro
+      - ~/.kube:/root/.kube:ro
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  monitoring-network:
+    driver: bridge

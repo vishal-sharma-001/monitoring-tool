@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Monitoring</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+
+        /* Alert severity colors with left border */
+        .alert-critical {
+            border-left: 4px solid #dc2626;
+            background: #fef2f2;
+        }
+        .alert-critical:hover {
+            background: #fee2e2;
+        }
+        .alert-critical.selected {
+            background: #fecaca;
+            box-shadow: 0 0 0 3px #dc2626;
+        }
+
+        .alert-high {
+            border-left: 4px solid #ea580c;
+            background: #fff7ed;
+        }
+        .alert-high:hover {
+            background: #ffedd5;
+        }
+        .alert-high.selected {
+            background: #fed7aa;
+            box-shadow: 0 0 0 3px #ea580c;
+        }
+
+        .alert-medium {
+            border-left: 4px solid #ca8a04;
+            background: #fefce8;
+        }
+        .alert-medium:hover {
+            background: #fef9c3;
+        }
+        .alert-medium.selected {
+            background: #fef08a;
+            box-shadow: 0 0 0 3px #ca8a04;
+        }
+
+        .alert-low {
+            border-left: 4px solid #2563eb;
+            background: #eff6ff;
+        }
+        .alert-low:hover {
+            background: #dbeafe;
+        }
+        .alert-low.selected {
+            background: #bfdbfe;
+            box-shadow: 0 0 0 3px #2563eb;
+        }
+
+        /* Severity card active state */
+        .severity-card {
+            transition: all 0.2s ease;
+        }
+        .severity-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        .severity-card.active {
+            box-shadow: 0 0 0 3px currentColor;
+            transform: scale(1.02);
+        }
+
+        /* Notification pulse animation */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .notification-dot {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        /* Smooth transitions */
+        * {
+            transition-property: transform, box-shadow, background-color;
+            transition-duration: 150ms;
+        }
+    </style>
+
+    <!-- Load scripts -->
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/state.js"></script>
+    <script src="/static/js/app.js"></script>
+</head>
+<body class="bg-gray-50" x-data="dashboardApp" x-init="init()">
+
+    <!-- Top Navigation Bar -->
+    <nav class="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo & Title -->
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl flex items-center justify-center shadow-md">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">Kubernetes Monitor</h1>
+                        <div class="flex items-center space-x-2 text-xs">
+                            <div :class="wsConnected ? 'bg-emerald-500' : 'bg-red-500'" class="w-2 h-2 rounded-full"></div>
+                            <span class="text-gray-600 font-medium" x-text="wsConnected ? 'Live' : 'Disconnected'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notifications Bell -->
+                <div class="relative">
+                    <button @click="showNotifications = !showNotifications"
+                            class="relative p-2.5 text-gray-600 hover:text-gray-900 rounded-xl hover:bg-gray-100 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        <!-- Red dot indicator for unread -->
+                        <span x-show="unreadCount > 0"
+                              class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full notification-dot"></span>
+                        <!-- Badge with count -->
+                        <span x-show="unreadCount > 0"
+                              class="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold ring-2 ring-white"
+                              x-text="unreadCount >= maxUnreadCount ? maxUnreadCount + '+' : unreadCount"></span>
+                    </button>
+
+                    <!-- Notifications Dropdown -->
+                    <div x-show="showNotifications" @click.away="showNotifications = false" x-cloak
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 mt-3 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 max-h-[32rem] overflow-hidden">
+                        <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-gray-50 to-white">
+                            <div>
+                                <h3 class="font-bold text-gray-900">Notifications</h3>
+                                <p class="text-xs text-gray-500 mt-0.5">
+                                    <span x-text="unreadCount"></span> unread alerts
+                                </p>
+                            </div>
+                            <button @click="markAllRead()"
+                                    class="text-sm text-blue-600 hover:text-blue-800 font-semibold hover:underline">
+                                Mark all read
+                            </button>
+                        </div>
+                        <div class="divide-y divide-gray-100 overflow-y-auto max-h-96">
+                            <template x-for="alert in recentAlerts()" :key="alert.id">
+                                <div @click="markAlertAsRead(alert); showAlertDetail(alert); showNotifications = false"
+                                     :class="isAlertUnread(alert) ? 'bg-blue-50' : ''"
+                                     class="p-4 hover:bg-gray-50 cursor-pointer transition-colors relative">
+                                    <!-- Unread indicator dot -->
+                                    <div x-show="isAlertUnread(alert)" class="absolute top-4 right-4 w-2.5 h-2.5 bg-blue-500 rounded-full"></div>
+
+                                    <div class="flex items-start space-x-3">
+                                        <div :class="{
+                                            'bg-red-100': alert.severity === 'critical',
+                                            'bg-orange-100': alert.severity === 'high',
+                                            'bg-yellow-100': alert.severity === 'medium',
+                                            'bg-blue-100': alert.severity === 'low'
+                                        }" class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0">
+                                            <svg class="w-5 h-5" :class="{
+                                                'text-red-600': alert.severity === 'critical',
+                                                'text-orange-600': alert.severity === 'high',
+                                                'text-yellow-600': alert.severity === 'medium',
+                                                'text-blue-600': alert.severity === 'low'
+                                            }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                            </svg>
+                                        </div>
+                                        <div class="flex-1 min-w-0 pr-6">
+                                            <div class="flex items-center space-x-2 mb-1">
+                                                <span :class="{
+                                                    'text-red-600': alert.severity === 'critical',
+                                                    'text-orange-600': alert.severity === 'high',
+                                                    'text-yellow-600': alert.severity === 'medium',
+                                                    'text-blue-600': alert.severity === 'low'
+                                                }" class="text-xs font-bold uppercase tracking-wide" x-text="alert.severity"></span>
+                                                <span class="w-1 h-1 bg-gray-300 rounded-full"></span>
+                                                <span class="text-xs text-gray-500" x-text="formatRelativeTime(alert.last_occurrence_at)"></span>
+                                            </div>
+                                            <p class="text-sm font-medium line-clamp-2"
+                                               :class="isAlertUnread(alert) ? 'text-gray-900' : 'text-gray-600'"
+                                               x-text="alert.message"></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="recentAlerts().length === 0" class="p-8 text-center">
+                                <svg class="mx-auto h-12 w-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <p class="mt-2 text-sm text-gray-500 font-medium">No recent alerts</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-6 py-8">
+
+        <!-- Stats Cards - Now Clickable -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+            <!-- Critical -->
+            <div @click="filterBySeverity('critical')"
+                 :class="filterSeverity === 'critical' ? 'active' : ''"
+                 class="severity-card bg-white rounded-xl border-l-4 border-red-600 p-5 shadow-sm cursor-pointer hover:shadow-md"
+                 style="color: #dc2626;">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Critical</p>
+                        <p class="text-4xl font-bold text-red-600 mt-2" x-text="severityCounts.critical"></p>
+                    </div>
+                    <div class="w-14 h-14 bg-red-100 rounded-xl flex items-center justify-center">
+                        <svg class="w-7 h-7 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- High -->
+            <div @click="filterBySeverity('high')"
+                 :class="filterSeverity === 'high' ? 'active' : ''"
+                 class="severity-card bg-white rounded-xl border-l-4 border-orange-600 p-5 shadow-sm cursor-pointer hover:shadow-md"
+                 style="color: #ea580c;">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-600 uppercase tracking-wide">High</p>
+                        <p class="text-4xl font-bold text-orange-600 mt-2" x-text="severityCounts.high"></p>
+                    </div>
+                    <div class="w-14 h-14 bg-orange-100 rounded-xl flex items-center justify-center">
+                        <svg class="w-7 h-7 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Medium -->
+            <div @click="filterBySeverity('medium')"
+                 :class="filterSeverity === 'medium' ? 'active' : ''"
+                 class="severity-card bg-white rounded-xl border-l-4 border-yellow-600 p-5 shadow-sm cursor-pointer hover:shadow-md"
+                 style="color: #ca8a04;">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Medium</p>
+                        <p class="text-4xl font-bold text-yellow-600 mt-2" x-text="severityCounts.medium"></p>
+                    </div>
+                    <div class="w-14 h-14 bg-yellow-100 rounded-xl flex items-center justify-center">
+                        <svg class="w-7 h-7 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Low -->
+            <div @click="filterBySeverity('low')"
+                 :class="filterSeverity === 'low' ? 'active' : ''"
+                 class="severity-card bg-white rounded-xl border-l-4 border-blue-600 p-5 shadow-sm cursor-pointer hover:shadow-md"
+                 style="color: #2563eb;">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Low</p>
+                        <p class="text-4xl font-bold text-blue-600 mt-2" x-text="severityCounts.low"></p>
+                    </div>
+                    <div class="w-14 h-14 bg-blue-100 rounded-xl flex items-center justify-center">
+                        <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+            <div class="flex flex-wrap gap-4 items-center">
+                <div class="flex items-center space-x-2">
+                    <label class="text-sm font-semibold text-gray-700">Severity:</label>
+                    <select x-model="filterSeverity"
+                            class="border border-gray-300 rounded-lg px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white">
+                        <option value="all">All Severities</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <label class="text-sm font-semibold text-gray-700">Source:</label>
+                    <select x-model="filterSource"
+                            class="border border-gray-300 rounded-lg px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white">
+                        <option value="all">All Sources</option>
+                        <option value="k8s_pod">Pod</option>
+                        <option value="k8s_node">Node</option>
+                        <option value="k8s_pod_metrics">Pod Metrics</option>
+                        <option value="k8s_node_metrics">Node Metrics</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <label class="text-sm font-semibold text-gray-700">Status:</label>
+                    <select x-model="filterStatus"
+                            class="border border-gray-300 rounded-lg px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white">
+                        <option value="all">All Status</option>
+                        <option value="firing">Firing</option>
+                        <option value="resolved">Resolved</option>
+                    </select>
+                </div>
+
+                <button @click="resetFilters()"
+                        class="ml-auto px-5 py-2 text-sm font-semibold text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+                    Clear Filters
+                </button>
+            </div>
+        </div>
+
+        <!-- Alerts List -->
+        <div class="space-y-3">
+            <template x-for="alert in filteredAlerts()" :key="alert.id">
+                <div @click="showAlertDetail(alert)"
+                     :class="'alert-' + alert.severity + (selectedAlert && selectedAlert.id === alert.id ? ' selected' : '')"
+                     class="bg-white rounded-xl p-5 cursor-pointer shadow-sm hover:shadow-md">
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1">
+                            <div class="flex items-center space-x-3 mb-2">
+                                <span :class="{
+                                    'bg-red-100 text-red-800': alert.severity === 'critical',
+                                    'bg-orange-100 text-orange-800': alert.severity === 'high',
+                                    'bg-yellow-100 text-yellow-800': alert.severity === 'medium',
+                                    'bg-blue-100 text-blue-800': alert.severity === 'low'
+                                }" class="px-2.5 py-1 text-xs font-bold rounded-md uppercase tracking-wide" x-text="alert.severity"></span>
+
+                                <span class="px-2.5 py-1 text-xs font-semibold bg-gray-100 text-gray-700 rounded-md" x-text="alert.source"></span>
+
+                                <span :class="alert.status === 'firing' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'"
+                                      class="px-2.5 py-1 text-xs font-semibold rounded-md capitalize" x-text="alert.status"></span>
+
+                                <span x-show="alert.occurrence_count > 1"
+                                      class="px-2.5 py-1 text-xs font-semibold bg-purple-100 text-purple-700 rounded-md">
+                                    <span x-text="alert.occurrence_count + 'x'"></span>
+                                </span>
+                            </div>
+
+                            <p class="text-sm font-semibold text-gray-900 mb-2" x-text="alert.message"></p>
+
+                            <div class="flex items-center space-x-4 text-xs text-gray-500 font-medium">
+                                <span x-text="'Triggered: ' + formatRelativeTime(alert.triggered_at)"></span>
+                                <span class="w-1 h-1 bg-gray-300 rounded-full"></span>
+                                <span x-text="'Last: ' + formatRelativeTime(alert.last_occurrence_at)"></span>
+                            </div>
+                        </div>
+
+                        <svg class="w-5 h-5 text-gray-400 flex-shrink-0 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                    </div>
+                </div>
+            </template>
+
+            <div x-show="filteredAlerts().length === 0" class="bg-white rounded-xl p-16 text-center shadow-sm">
+                <svg class="mx-auto h-16 w-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <h3 class="mt-4 text-base font-semibold text-gray-900">No alerts found</h3>
+                <p class="mt-1 text-sm text-gray-500">No alerts match your current filters.</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Alert Detail Modal -->
+    <div x-show="showModal"
+         x-cloak
+         class="fixed inset-0 z-50 overflow-y-auto"
+         @keydown.escape.window="showModal = false">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <!-- Backdrop -->
+            <div class="fixed inset-0 bg-gray-900 bg-opacity-50 backdrop-blur-sm" @click="showModal = false"></div>
+
+            <!-- Modal -->
+            <div class="relative bg-white rounded-2xl max-w-2xl w-full shadow-2xl">
+                <!-- Header -->
+                <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                    <h3 class="text-xl font-bold text-gray-900">Alert Details</h3>
+                    <button @click="showModal = false" class="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Content -->
+                <div x-show="selectedAlert" class="p-6">
+                    <div class="space-y-5">
+                        <!-- Severity & Status -->
+                        <div class="flex items-center space-x-3">
+                            <span :class="{
+                                'bg-red-100 text-red-800': selectedAlert && selectedAlert.severity === 'critical',
+                                'bg-orange-100 text-orange-800': selectedAlert && selectedAlert.severity === 'high',
+                                'bg-yellow-100 text-yellow-800': selectedAlert && selectedAlert.severity === 'medium',
+                                'bg-blue-100 text-blue-800': selectedAlert && selectedAlert.severity === 'low'
+                            }" class="px-3 py-1.5 text-sm font-bold rounded-lg uppercase tracking-wide" x-text="selectedAlert?.severity"></span>
+
+                            <span :class="selectedAlert && selectedAlert.status === 'firing' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'"
+                                  class="px-3 py-1.5 text-sm font-semibold rounded-lg capitalize" x-text="selectedAlert?.status"></span>
+                        </div>
+
+                        <!-- Message -->
+                        <div>
+                            <h4 class="text-sm font-bold text-gray-700 mb-2">Message</h4>
+                            <p class="text-sm text-gray-900 bg-gray-50 p-3 rounded-lg" x-text="selectedAlert?.message"></p>
+                        </div>
+
+                        <!-- Details Grid -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-gray-50 p-3 rounded-lg">
+                                <h4 class="text-xs font-bold text-gray-600 mb-1 uppercase tracking-wide">Source</h4>
+                                <p class="text-sm text-gray-900 font-semibold" x-text="selectedAlert?.source"></p>
+                            </div>
+
+                            <div class="bg-gray-50 p-3 rounded-lg">
+                                <h4 class="text-xs font-bold text-gray-600 mb-1 uppercase tracking-wide">Occurrences</h4>
+                                <p class="text-sm text-gray-900 font-semibold" x-text="selectedAlert?.occurrence_count"></p>
+                            </div>
+
+                            <div class="bg-gray-50 p-3 rounded-lg">
+                                <h4 class="text-xs font-bold text-gray-600 mb-1 uppercase tracking-wide">Triggered At</h4>
+                                <p class="text-sm text-gray-900 font-semibold" x-text="selectedAlert ? new Date(selectedAlert.triggered_at).toLocaleString() : ''"></p>
+                            </div>
+
+                            <div class="bg-gray-50 p-3 rounded-lg">
+                                <h4 class="text-xs font-bold text-gray-600 mb-1 uppercase tracking-wide">Last Occurrence</h4>
+                                <p class="text-sm text-gray-900 font-semibold" x-text="selectedAlert ? new Date(selectedAlert.last_occurrence_at).toLocaleString() : ''"></p>
+                            </div>
+                        </div>
+
+                        <!-- Labels -->
+                        <div x-show="selectedAlert && Object.keys(selectedAlert.labels || {}).length > 0">
+                            <h4 class="text-sm font-bold text-gray-700 mb-3">Labels</h4>
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="[key, value] in Object.entries(selectedAlert?.labels || {})" :key="key">
+                                    <span class="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg font-mono border border-gray-200">
+                                        <span class="font-bold" x-text="key"></span>: <span x-text="value"></span>
+                                    </span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Fingerprint -->
+                        <div>
+                            <h4 class="text-sm font-bold text-gray-700 mb-2">Fingerprint</h4>
+                            <code class="text-xs bg-gray-100 text-gray-900 px-3 py-2 rounded-lg font-mono block break-all border border-gray-200" x-text="selectedAlert?.fingerprint"></code>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="flex justify-end p-6 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
+                    <button @click="showModal = false"
+                            class="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-semibold shadow-sm hover:shadow-md transition-all">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-6 right-6 space-y-3 z-50">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div :class="{
+                'bg-red-500': toast.severity === 'critical',
+                'bg-orange-500': toast.severity === 'high',
+                'bg-yellow-500': toast.severity === 'medium',
+                'bg-blue-500': toast.severity === 'low'
+            }"
+            x-transition:enter="transition ease-out duration-300"
+            x-transition:enter-start="opacity-0 transform translate-x-8"
+            x-transition:enter-end="opacity-100 transform translate-x-0"
+            x-transition:leave="transition ease-in duration-200"
+            x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0"
+            class="text-white px-5 py-4 rounded-xl shadow-xl max-w-sm">
+                <div class="flex items-start space-x-3">
+                    <svg class="w-6 h-6 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div class="flex-1">
+                        <p class="text-sm font-semibold" x-text="toast.message"></p>
+                    </div>
+                    <button @click="removeToast(toast.id)" class="text-white hover:text-gray-200 flex-shrink-0">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </template>
+    </div>
+
+</body>
+</html>

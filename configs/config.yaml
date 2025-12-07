@@ -1,0 +1,44 @@
+server:
+  port: 8080
+  read_timeout: 30
+  write_timeout: 30
+
+postgres:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres  # Override with POSTGRES_PASSWORD environment variable
+  database: monitoring_db
+  sslmode: disable
+  auto_migrate: true  # Run migrations automatically on server start
+
+kubernetes:
+  # Kubernetes authentication uses standard priority:
+  # 1. In-cluster config (when running inside K8s)
+  # 2. KUBECONFIG environment variable
+  # 3. ~/.kube/config (default)
+  # No configuration needed - handled automatically by k8s client-go
+  in_cluster: false  # Auto-detected, set to true when running in K8s pod
+  metrics_interval: 60  # Metrics polling interval in seconds
+
+logging:
+  level: info  # debug, info, warn, error
+  format: console  # 'console' for readable colored logs, 'json' for structured logs
+  output: stdout
+
+email:
+  enabled: false  # Set to true to enable email notifications
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+  from: alerts@example.com  # Override with SMTP_FROM environment variable
+  to:
+    - team@example.com  # Configure recipient emails here
+  username: your-email@example.com  # Override with SMTP_USERNAME environment variable
+  password: ""  # REQUIRED: Set via SMTP_PASSWORD environment variable
+
+alert_rules:
+  pod_restart_threshold: 3    # Trigger alert after N restarts in 5 minutes
+  pod_cpu_threshold: 80       # Pod CPU usage percentage threshold
+  pod_memory_threshold: 85    # Pod memory usage percentage threshold
+  node_cpu_threshold: 80      # Node CPU usage percentage threshold
+  node_memory_threshold: 85   # Node memory usage percentage threshold
