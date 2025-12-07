@@ -1,212 +1,242 @@
 # Kubernetes Monitoring Tool
 
-Production-ready Kubernetes monitoring with real-time alerts, PostgreSQL persistence, and WebSocket updates.
-
-## Features
-
-- Real-time Kubernetes monitoring (Pods, Nodes, Metrics)
-- Rule-based alert engine with configurable thresholds
-- WebSocket push notifications + optional email alerts
-- PostgreSQL with automatic migrations
-- RESTful API + responsive web dashboard
-- Environment-driven configuration (12-factor app)
-- Docker and Kubernetes ready
+Monitor your Kubernetes cluster with real-time alerts and a web dashboard.
 
 ## Quick Start
 
-**Docker Compose (Recommended)**
 ```bash
 docker-compose up -d
 open http://localhost:8080
 ```
 
-**Local Development**
+## What It Does
 
-Requirements: Go 1.24+, PostgreSQL 13+, kubeconfig access
+- Monitors Kubernetes pods and nodes
+- Alerts on issues (crashes, high CPU/memory, restarts)
+- Real-time web dashboard with live updates
+- Email notifications
+- Stores alerts in PostgreSQL
+
+## Architecture & Data Flow
+
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Kubernetes Cluster                           │
+│                    (Pods, Nodes, Metrics Server)                    │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ Watches & Collects
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Data Collectors                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────────┐  │
+│  │ Pod Watcher  │  │ Node Watcher │  │ Metrics Watcher (CPU/   │  │
+│  │              │  │              │  │ Memory via metrics API) │  │
+│  └──────────────┘  └──────────────┘  └─────────────────────────┘  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ Sends Events
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Alert Engine                                │
+│  • Evaluates rules (CPU > 80%, CrashLoopBackOff, etc.)             │
+│  • Determines severity (Critical, High, Medium)                     │
+│  • Creates/Updates alert records                                    │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ Publishes Alerts
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                          Event Bus (Pub/Sub)                        │
+│              Distributes alerts to multiple observers               │
+└────────┬──────────────────────┬─────────────────────┬───────────────┘
+         │                      │                     │
+         ↓                      ↓                     ↓
+┌────────────────┐    ┌─────────────────┐   ┌──────────────────┐
+│   PostgreSQL   │    │  WebSocket Hub  │   │ Email Notifier   │
+│   Repository   │    │                 │   │    (Optional)    │
+│                │    │  • Maintains    │   │                  │
+│  • Stores all  │    │    connections  │   │  • Sends SMTP    │
+│    alerts      │    │  • Broadcasts   │   │    alerts to     │
+│  • Provides    │    │    to clients   │   │    team          │
+│    history     │    │                 │   │                  │
+└────────────────┘    └────────┬────────┘   └──────────────────┘
+                               │ Real-time Updates
+                               ↓
+                     ┌──────────────────────┐
+                     │   Web Dashboard      │
+                     │   (Alpine.js UI)     │
+                     │                      │
+                     │  • Shows alerts      │
+                     │  • Live updates      │
+                     │  • Alert history     │
+                     └──────────────────────┘
+```
+
+### How It Works
+
+1. **Collection Phase**
+   - Three watchers continuously monitor Kubernetes cluster
+   - Pod Watcher: Tracks pod status changes (Running, Failed, CrashLoopBackOff)
+   - Node Watcher: Monitors node conditions (Ready, MemoryPressure, DiskPressure)
+   - Metrics Watcher: Polls metrics-server every 60s for CPU/Memory usage
+
+2. **Evaluation Phase**
+   - Alert Engine receives events from collectors
+   - Applies configurable rules (CPU > 80%, restarts > 3, etc.)
+   - Assigns severity levels (Critical, High, Medium)
+   - Creates or updates alert records with timestamps
+
+3. **Distribution Phase**
+   - Event Bus publishes alerts to three observers in parallel
+   - PostgreSQL stores alerts for historical analysis
+   - WebSocket Hub pushes to all connected dashboard clients
+   - Email Notifier sends notifications (if enabled)
+
+4. **Presentation Phase**
+   - Web UI receives real-time updates via WebSocket
+   - REST API provides alert queries and statistics
+   - Dashboard shows current status and alert history
+
+## Features
+
+- **Real-time monitoring** - Watches pods, nodes, and resource usage
+- **Smart alerts** - Detects crashes, OOM kills, high resource usage
+- **Web dashboard** - Clean UI with live WebSocket updates
+- **Email alerts** - Optional SMTP notifications
+- **Easy configuration** - Environment variables or config file
+- **Docker ready** - Run with docker-compose
+
+## Local Development
+
+**Requirements:** Go 1.24+, PostgreSQL, kubectl configured
 
 ```bash
-# Build and run
+# 1. Build
 make build
-cp .env.example .env  # Configure if needed
+
+# 2. Configure (optional)
+cp .env.example .env
+
+# 3. Run
 POSTGRES_PASSWORD=postgres ./bin/monitoring-tool
 ```
 
 ## Configuration
 
-Layered system: `config.yaml` → `.env` → `environment variables`
+Set via environment variables or `.env` file:
 
-**Essential Variables**
 ```bash
 # Database
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_PASSWORD=postgres
-POSTGRES_DB=monitoring_db
 
-# Kubernetes
-K8S_IN_CLUSTER=false        # true for in-cluster
-KUBECONFIG=~/.kube/config
-
-# Alert Thresholds (defaults shown)
+# Alert thresholds (percentage)
 ALERT_POD_CPU_THRESHOLD=80
 ALERT_POD_MEMORY_THRESHOLD=85
-ALERT_NODE_CPU_THRESHOLD=80
-ALERT_NODE_MEMORY_THRESHOLD=85
 
 # Email (optional)
 EMAIL_ENABLED=false
 SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_PASSWORD=your-app-password
-SMTP_TO=team@example.com
+SMTP_PASSWORD=your-password
+SMTP_TO=alerts@example.com
 ```
 
-See [.env.example](.env.example) for all 30+ variables.
+See [.env.example](.env.example) for all options.
 
-## Architecture
-
-```
-K8s Cluster → Collectors → Alert Engine → Event Bus
-                                              ↓
-                         ┌────────────────────┼────────────────────┐
-                         ↓                    ↓                    ↓
-                   PostgreSQL           WebSocket Hub        Email Notifier
-                                              ↓
-                                          Web UI
-```
-
-## API Reference
+## API Endpoints
 
 **Alerts**
 - `GET /api/alerts/recent` - Last 50 alerts
 - `GET /api/alerts/count` - Total count
 - `GET /api/alerts/active/count` - Active alerts
-- `GET /api/alerts/severity/counts` - Counts by severity
 
-**Health**
+**Other**
+- `GET /` - Web dashboard
 - `GET /health` - Health check
-- `GET /api/info` - System info
-- `GET /ws` - WebSocket connection
-- `GET /` - Web UI
+- `GET /ws` - WebSocket for live updates
 
-**Example Response**
-```json
-{
-  "alerts": [{
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "firing",
-    "severity": "critical",
-    "message": "Pod web-app-7d8f9c-xyz is in CrashLoopBackOff",
-    "source": "k8s_pod",
-    "labels": {"namespace": "production", "pod": "web-app-7d8f9c-xyz"},
-    "triggered_at": "2025-12-07T13:30:00Z"
-  }]
-}
-```
+## Alert Types
 
-## Alert Rules
+**Pod Issues**
+- CrashLoopBackOff (Critical)
+- OOMKilled (Critical)
+- ImagePullBackOff (High)
+- High CPU/Memory usage
+- Excessive restarts
 
-**Pod Monitoring**
-- CrashLoopBackOff (Critical), OOMKilled (Critical)
-- ImagePullBackOff (High), Pending >5min (Medium)
-- High restarts (High), High CPU/Memory (Medium/High)
+**Node Issues**
+- NotReady (Critical)
+- Memory/Disk pressure (High)
+- High CPU/Memory usage
 
-**Node Monitoring**
-- NotReady (Critical), NetworkUnavailable (Critical)
-- Memory/Disk/PID Pressure (High/Medium)
-- High CPU/Memory (High)
+## Docker Deployment
 
-Default thresholds: 80% CPU, 85% Memory, 3 restarts
-
-## Development
-
-**Testing**
 ```bash
-make test                # Run all tests
-make test-coverage       # With coverage report
-```
-
-**Building**
-```bash
-make build               # Development build
-make clean && make build # Clean build
-```
-
-**Database:** Auto-migrates on startup (GORM). Manual migrations: `make migrate-up`
-
-## Deployment
-
-**Docker**
-```bash
-docker build -t monitoring-tool:latest .
+# Build and run
+docker build -t monitoring-tool .
 docker run -d -p 8080:8080 \
   -e POSTGRES_PASSWORD=yourpass \
   -v ~/.kube:/root/.kube:ro \
-  monitoring-tool:latest
+  monitoring-tool
 ```
 
-**Kubernetes**
+## Kubernetes Deployment
+
 ```bash
+# Create secrets
 kubectl create secret generic monitoring-secrets \
   --from-literal=postgres-password=yourpass
-kubectl apply -f k8s/
-```
 
-Set `K8S_IN_CLUSTER=true` for in-cluster authentication.
+# Deploy
+kubectl apply -f k8s/
+
+# Set K8S_IN_CLUSTER=true when running inside cluster
+```
 
 ## Project Structure
 
 ```
 monitoring-tool/
-├── cmd/monitoring-tool/    # Entry point (main.go, init.go)
+├── cmd/monitoring-tool/    # Main application
 ├── internal/
-│   ├── api/               # HTTP handlers & routes
-│   ├── collector/         # K8s watchers (pods, nodes, metrics)
-│   ├── processor/         # Alert engine & event bus
-│   ├── repository/        # Data access layer
-│   ├── storage/           # Database & migrations
-│   └── websocket/         # Real-time hub
-├── web/static/            # UI (Alpine.js + Tailwind)
+│   ├── api/               # HTTP handlers
+│   ├── collector/         # K8s watchers
+│   ├── processor/         # Alert engine
+│   ├── storage/           # Database
+│   └── websocket/         # Real-time updates
+├── web/static/            # Web UI
 ├── configs/config.yaml    # Default config
-├── docker-compose.yml     # Local stack
-└── .env.example          # Config template
+└── docker-compose.yml     # Local setup
 ```
 
-## Tech Stack
+## Development
 
-Go 1.24, Gin, GORM, PostgreSQL 16, Kubernetes Client-Go, Gorilla WebSocket, Zerolog, Alpine.js, Tailwind CSS
+```bash
+make test              # Run tests
+make build             # Build binary
+make docker-up         # Start with Docker
+```
 
 ## Troubleshooting
 
-**Database connection fails**
+**Can't connect to database**
 ```bash
-docker ps | grep postgres                    # Check if running
-psql -h localhost -p 5432 -U postgres -d monitoring_db
-env | grep POSTGRES                          # Verify env vars
+docker ps | grep postgres
+env | grep POSTGRES
 ```
 
-**Kubernetes connection issues**
+**Can't access Kubernetes**
 ```bash
-kubectl cluster-info                         # Verify access
-kubectl auth can-i get pods                  # Check permissions
-kubectl top nodes                            # Test metrics-server
+kubectl cluster-info
+kubectl auth can-i get pods
 ```
 
-**WebSocket not connecting**
-- Check port 8080 is accessible
-- Verify no firewall blocking
-- Check browser console for errors
-
-**Email not sending**
+**Email not working**
 - Set `EMAIL_ENABLED=true`
 - Use App Password for Gmail
-- Check SMTP port (587/465) is allowed
-- Enable debug logging: `LOG_LEVEL=debug`
+- Check `LOG_LEVEL=debug` for errors
 
-## Performance
+## Tech Stack
 
-- Worker pool for concurrent processing
-- WebSocket: 500-message buffer, per-client mutex
-- Event Bus: 200-event buffer, parallel observers
-- Database: 25 max connections, 5 idle
-- Alert evaluation: Every 60s (configurable)
+Go 1.24, Gin, PostgreSQL, Kubernetes Client-Go, WebSockets, Alpine.js
